@@ -1,0 +1,80 @@
+﻿:root {
+  --bg: #f3f6fb;
+  --panel: #fff;
+  --line: #dce4ee;
+  --text: #1b2a3a;
+  --sub: #66788a;
+  --primary: #0c5fd6;
+  --danger: #d63a3a;
+  --ok: #1f9d5b;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+a { color: inherit; }
+
+.app-shell-layout { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+.app-sidebar { background: linear-gradient(180deg, #0c5fd6, #0a4fb3); color: #fff; padding: 18px; display: flex; flex-direction: column; }
+.app-sidebar h2 { margin: 0 0 8px; }
+.app-sidebar p { margin: 0; font-weight: 600; }
+.app-sidebar small { opacity: 0.85; margin-bottom: 16px; }
+.app-sidebar nav { display: grid; gap: 8px; }
+.app-sidebar nav a { text-decoration: none; padding: 10px; border-radius: 8px; background: transparent; color: #e8f0ff; }
+.app-sidebar nav a.active, .app-sidebar nav a:hover { background: rgba(255,255,255,.18); color: #fff; }
+.logout-btn { margin-top: auto; background: #fff; color: #0a4fb3; border: 0; border-radius: 8px; padding: 10px; font-weight: 600; cursor: pointer; }
+
+.app-content { padding: 20px; overflow-x: hidden; }
+.page-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.page-header h1 { margin: 0; font-size: 26px; }
+.page-header p { margin: 4px 0 0; color: var(--sub); }
+.link-btn { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; text-decoration: none; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: 0 2px 10px rgba(8,32,64,.05); }
+.cards-grid { display: grid; grid-template-columns: repeat(2, minmax(200px,1fr)); gap: 14px; }
+.card-link { text-decoration: none; }
+.card-link h3 { margin: 0 0 6px; }
+.card-link p { margin: 0; color: var(--sub); }
+
+.grid-2, .grid-3, .grid-4 { display: grid; gap: 10px; }
+.grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.grid-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.grid-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+
+input, select, textarea, button { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #c7d3e0; font: inherit; }
+button { background: var(--primary); color: #fff; border: none; cursor: pointer; font-weight: 600; }
+button.secondary { background: #eef4ff; color: #234; border: 1px solid #ccd9ee; }
+
+.simple-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.simple-table th, .simple-table td { border-bottom: 1px solid #e4ebf3; padding: 10px 8px; text-align: left; vertical-align: top; }
+.simple-table th { color: #68798d; font-size: 12px; text-transform: uppercase; letter-spacing: .2px; }
+.actions-cell { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.risk { display: inline-flex; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; color: #fff; }
+.risk-vermelho { background: #d63a3a; }
+.risk-laranja { background: #f08c00; }
+.risk-amarelo { background: #e8b200; color: #222; }
+.risk-verde { background: #2f9e44; }
+.risk-azul { background: #1971c2; }
+.risk-semclassificacao { background: #7a8794; }
+
+.auth-page, .public-page { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+.auth-card, .public-page .panel { width: min(880px, 100%); }
+.auth-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.auth-card h1 { margin: 0; }
+.auth-card p { margin: 6px 0 16px; color: var(--sub); }
+.auth-card label { display: block; margin: 8px 0 4px; color: var(--sub); font-size: 13px; }
+
+.error-box, .ok-box { margin-top: 10px; border-radius: 8px; padding: 10px; font-size: 14px; }
+.error-box { background: #fdecec; color: #8f2323; border: 1px solid #f6c6c6; }
+.ok-box { background: #eaf9ef; color: #1f7842; border: 1px solid #c6ecd4; }
+.hint { margin-top: 10px; color: var(--sub); }
+
+@media (max-width: 1100px) {
+  .grid-4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (max-width: 900px) {
+  .app-shell-layout { grid-template-columns: 1fr; }
+  .app-sidebar { position: static; }
+  .grid-2, .grid-3, .grid-4, .cards-grid { grid-template-columns: 1fr; }
+}
