@@ -20,11 +20,17 @@ export default function FilaPage() {
 
   const criticalCount = useMemo(() => fila.filter((p) => p.corRisco === "Vermelho" || p.corRisco === "Laranja").length, [fila]);
   const waitingAverage = useMemo(() => {
-    if (!fila.length) return 0;
-    return Math.round(fila.reduce((sum, p) => sum + (p.minutosEspera || 0), 0) / fila.length);
+    const aguardando = fila.filter((p) => p.status !== "Finalizado" && p.status !== "Encaminhado");
+    if (!aguardando.length) return 0;
+    return Math.round(aguardando.reduce((sum, p) => sum + (p.minutosEspera || 0), 0) / aguardando.length);
   }, [fila]);
 
   async function startAttendance(p) {
+    if (p.status === "Finalizado" || p.status === "Encaminhado" || p.status === "Cancelado") {
+      setToast("Esse paciente ja nao esta disponivel para atendimento.");
+      setSelected(null);
+      return;
+    }
     await api.post("/atendimentos/iniciar", p.pacienteId).catch(() => null);
     setToast(`Atendimento iniciado: ${p.nomePaciente}`);
     setSelected(null);
@@ -32,30 +38,46 @@ export default function FilaPage() {
   }
 
   async function callPatient(p) {
+    const nextStatus = "EmAtendimento";
+    const ok = await api.post(`/fila/${p.pacienteId}/status?status=${nextStatus}`).then(() => true).catch(() => false);
+    if (!ok) return setToast("Nao foi possivel atualizar o status do paciente.");
     setToast(`Paciente chamado: ${p.nomePaciente}`);
+    await loadFila();
+  }
+
+  async function callNext() {
+    const ok = await api.post("/fila/proximo/chamar").then(() => true).catch(() => false);
+    if (!ok) return setToast("Nao foi possivel chamar o proximo paciente.");
+    setToast("Proximo paciente chamado.");
+    await loadFila();
   }
 
   return (
     <div className="page-wrap space-y-3">
       <PageHeader
-        title="Fila em tempo real"
-        subtitle="Leitura instantânea de prioridade, tempo de espera e estado de atendimento"
-        actions={<div className="inline-flex items-center gap-2 rounded-lg border border-[#2d4741] bg-[#132522] px-3 py-2 text-xs font-bold text-[#97b0a9]"><Wifi size={14} className={realtimeConnected ? "text-emerald-300" : "text-amber-300"} />Realtime {realtimeConnected ? "conectado" : "instável"}</div>}
+        title="Fila em Tempo Real"
+        subtitle="Prioridade Manchester, SLA e andamento de atendimento em atualizacao continua"
+        actions={
+          <div className="flex items-center gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#e8edf2] bg-white px-3 py-2 text-xs font-bold text-[#6b7280]"><Wifi size={14} className={realtimeConnected ? "text-emerald-600" : "text-amber-600"} />Realtime {realtimeConnected ? "conectado" : "instavel"}</div>
+            <button className="btn btn-primary" onClick={callNext}>Chamar proximo</button>
+          </div>
+        }
       />
 
       {!realtimeConnected && <OfflineState />}
 
       <section className="grid gap-3 md:grid-cols-3">
-        <div className="panel-soft"><p className="text-[11px] uppercase tracking-[0.12em] text-[#7f9b93]">Pacientes na fila</p><p className="mt-1 text-2xl font-extrabold text-[#ecf6f2]">{fila.length}</p></div>
-        <div className="panel-soft"><p className="text-[11px] uppercase tracking-[0.12em] text-[#7f9b93]">Tempo médio</p><p className="mt-1 text-2xl font-extrabold text-[#ecf6f2]">{waitingAverage} min</p></div>
-        <div className="panel-soft !border-red-400/35"><p className="text-[11px] uppercase tracking-[0.12em] text-red-200">Críticos</p><p className="mt-1 text-2xl font-extrabold text-red-300">{criticalCount}</p></div>
+        <div className="panel-soft"><p className="text-[11px] uppercase tracking-[0.12em] text-[#6b7280]">Pacientes na fila</p><p className="mt-1 text-2xl font-extrabold text-[#111827]">{fila.length}</p></div>
+        <div className="panel-soft"><p className="text-[11px] uppercase tracking-[0.12em] text-[#6b7280]">Tempo medio</p><p className="mt-1 text-2xl font-extrabold text-[#111827]">{waitingAverage} min</p></div>
+        <div className="panel-soft !border-red-200"><p className="text-[11px] uppercase tracking-[0.12em] text-red-700">Criticos</p><p className="mt-1 text-2xl font-extrabold text-red-700">{criticalCount}</p></div>
       </section>
 
       <section className="panel-soft">
         <div className="flex flex-wrap gap-2 text-xs font-bold">
-          <span className="inline-flex items-center gap-1 rounded-md border border-[#2a433c] bg-[#132421] px-2 py-1 text-[#9ab3ac]"><Activity size={13} />Fila priorizada por risco</span>
-          <span className="inline-flex items-center gap-1 rounded-md border border-[#2a433c] bg-[#132421] px-2 py-1 text-[#9ab3ac]"><Clock3 size={13} />SLA visível por tempo</span>
-          <span className="inline-flex items-center gap-1 rounded-md border border-[#2a433c] bg-[#132421] px-2 py-1 text-[#9ab3ac]"><Siren size={13} />Alerta para casos críticos</span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#e8edf2] bg-white px-2 py-1 text-[#6b7280]"><Activity size={13} />Fila priorizada por risco</span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#e8edf2] bg-white px-2 py-1 text-[#6b7280]"><Clock3 size={13} />SLA visivel por tempo</span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#e8edf2] bg-white px-2 py-1 text-[#6b7280]"><Siren size={13} />Alerta para casos criticos</span>
         </div>
       </section>
 
@@ -68,7 +90,6 @@ export default function FilaPage() {
           patients={fila}
           onCall={callPatient}
           onStart={(p) => setSelected(p)}
-          onRiskChange={(p) => setToast(`Ajuste de prioridade solicitado para ${p.nomePaciente}`)}
           onDetails={(p) => navigate(`/app/pacientes/${p.pacienteId}`)}
         />
       )}
@@ -76,7 +97,7 @@ export default function FilaPage() {
       <ConfirmModal
         open={!!selected}
         title="Iniciar atendimento"
-        message={`Confirmar início de atendimento para ${selected?.nomePaciente}?`}
+        message={`Confirmar inicio de atendimento para ${selected?.nomePaciente}?`}
         onConfirm={() => startAttendance(selected)}
         onCancel={() => setSelected(null)}
       />

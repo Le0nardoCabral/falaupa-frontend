@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import { api } from "../api/client";
 
 function statusLabel(status) {
@@ -15,14 +16,7 @@ function statusLabel(status) {
   };
 
   if (map[normalized]) return map[normalized];
-
-  // Fallback para qualquer status em PascalCase/CamelCase.
-  const humanized = normalized
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/_/g, " ")
-    .trim();
-
-  return humanized || "Aguardando";
+  return normalized.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").trim() || "Aguardando";
 }
 
 export default function AcompanhamentoPublicoPage() {
@@ -33,7 +27,7 @@ export default function AcompanhamentoPublicoPage() {
 
   async function load() {
     const { data: payload } = await api.get(`/publico/acompanhar/${protocolo}`).catch((err) => {
-      setError(err?.response?.data || "Não foi possível carregar seu acompanhamento.");
+      setError(err?.response?.data || "Nao foi possivel carregar seu acompanhamento.");
       return { data: null };
     });
 
@@ -47,59 +41,50 @@ export default function AcompanhamentoPublicoPage() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 15000);
+    const id = setInterval(load, 5000);
     return () => clearInterval(id);
   }, [protocolo]);
 
   return (
-    <div className="min-h-screen bg-[#070d0c]">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-4xl p-4 md:p-6">
         <header className="panel mb-4">
-          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#8aa69e]">Acompanhamento público</p>
-          <h1 className="mt-1 text-2xl font-extrabold text-[#ecf7f3]">Protocolo {protocolo}</h1>
-          <p className="text-sm text-[#9bb4ad]">Atualização automática a cada 15 segundos.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7280]">Acompanhamento em tempo real</p>
+          <h1 className="mt-1 text-2xl font-extrabold text-[#111827]">Protocolo {protocolo}</h1>
+          <p className="text-sm text-[#6b7280]">Atualizacao automatica a cada 5 segundos.</p>
         </header>
 
-        {loading && <div className="panel-soft text-sm text-[#a1b9b2]">Carregando dados da sua fila...</div>}
-        {!loading && error && <div className="rounded-xl border border-red-400/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">{error}</div>}
+        {loading && <div className="panel-soft text-sm text-[#6b7280]">Carregando dados da sua fila...</div>}
+        {!loading && error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         {!loading && !error && data && (
-          <div className="space-y-4">
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-4">
             <section className="panel">
-              <h2 className="text-lg font-bold text-[#eaf5f1]">{data.nomeCompleto}</h2>
-              <p className="text-sm text-[#96afa8]">{data.unidadeUpa} · {data.cidade}</p>
-              <div className="mt-2 inline-flex rounded-md border border-emerald-400/40 bg-emerald-950/30 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.08em] text-emerald-200">
+              <h2 className="text-lg font-bold text-[#111827]">{data.nomeCompleto}</h2>
+              <p className="text-sm text-[#6b7280]">{data.unidadeUpa} · {data.cidade}</p>
+              <div className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.08em] text-emerald-700">
                 {statusLabel(data.status)}
               </div>
             </section>
 
             <section className="grid gap-3 md:grid-cols-3">
-              <article className="panel-soft">
-                <p className="text-[11px] uppercase tracking-[0.1em] text-[#87a29a]">Posição na fila</p>
-                <p className="mt-1 text-3xl font-extrabold text-[#ecf7f3]">{data.posicaoFila}</p>
-              </article>
-              <article className="panel-soft">
-                <p className="text-[11px] uppercase tracking-[0.1em] text-[#87a29a]">Pessoas à frente</p>
-                <p className="mt-1 text-3xl font-extrabold text-[#ecf7f3]">{data.pessoasNaFrente}</p>
-              </article>
-              <article className="panel-soft">
-                <p className="text-[11px] uppercase tracking-[0.1em] text-[#87a29a]">Estimativa</p>
-                <p className="mt-1 text-3xl font-extrabold text-[#ecf7f3]">{data.estimativaMinutos} min</p>
-              </article>
+              <article className="panel-soft"><p className="text-[11px] uppercase tracking-[0.1em] text-[#6b7280]">Posicao na fila</p><p className="mt-1 text-3xl font-extrabold text-[#111827]">{data.posicaoFila}</p></article>
+              <article className="panel-soft"><p className="text-[11px] uppercase tracking-[0.1em] text-[#6b7280]">Pessoas a frente</p><p className="mt-1 text-3xl font-extrabold text-[#111827]">{data.pessoasNaFrente}</p></article>
+              <article className="panel-soft"><p className="text-[11px] uppercase tracking-[0.1em] text-[#6b7280]">Estimativa</p><p className="mt-1 text-3xl font-extrabold text-[#111827]">{data.estimativaMinutos} min</p></article>
             </section>
 
             <section className="panel-soft">
-              <p className="text-sm text-[#bdd2cc]">Total de pacientes aguardando no momento: <strong>{data.totalAguardando}</strong></p>
-              <p className="mt-1 text-xs text-[#8da8a0]">Última atualização: {new Date(data.atualizadoEm).toLocaleString("pt-BR")}</p>
+              <p className="text-sm text-[#374151]">Total de pacientes aguardando no momento: <strong>{data.totalAguardando}</strong></p>
+              <p className="mt-1 text-xs text-[#6b7280]">Ultima atualizacao: {new Date(data.atualizadoEm).toLocaleString("pt-BR")}</p>
             </section>
 
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={load} className="btn btn-primary">Atualizar agora</button>
-              <Link to="/autoatendimento" className="btn btn-neutral">Novo cadastro</Link>
+            <div className="grid gap-2 md:grid-cols-1">
+              <Link to="/app/paciente/triagem" className="btn btn-neutral">Nova pre-triagem</Link>
             </div>
-          </div>
+          </motion.div>
         )}
       </div>
     </div>
   );
 }
+

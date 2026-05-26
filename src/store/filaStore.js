@@ -13,7 +13,8 @@ export const useFilaStore = create((set, get) => ({
     set({ loading: true, error: "" });
     try {
       const { data } = await api.get("/fila");
-      set({ fila: data });
+      const list = Array.isArray(data) ? data : Array.isArray(data?.value) ? data.value : [];
+      set({ fila: list });
     } catch {
       set({ error: "Nao foi possivel carregar a fila." });
     } finally {

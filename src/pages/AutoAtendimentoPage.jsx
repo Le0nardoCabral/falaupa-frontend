@@ -1,286 +1,359 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuthStore } from "../store/authStore";
 
-const FLOW = [
-  { id: "queixaPrincipal", question: "Olá, eu sou a assistente de triagem. Em uma frase, o que você está sentindo agora?", type: "text" },
-  { id: "sintomasRelatados", question: "Além disso, quais outros sintomas você percebeu?", type: "text" },
-  { id: "dorNoPeito", question: "Você sente dor no peito agora?", type: "choice", options: ["Sim", "Não"] },
-  { id: "faltaDeAr", question: "Está com falta de ar ou dificuldade para respirar?", type: "choice", options: ["Sim", "Não"] },
-  { id: "sangramento", question: "Existe sangramento ativo agora?", type: "choice", options: ["Sim", "Não"] },
-  { id: "intensidadeDor", question: "De 0 a 10, qual a intensidade da dor neste momento?", type: "choice", options: ["0", "2", "4", "6", "8", "10"] },
-  { id: "tempoSintomasMinutos", question: "Há quanto tempo os sintomas começaram? (em minutos)", type: "text" },
-  { id: "observacoes", question: "Tem algo importante para avisar? Exemplo: alergia, gravidez, diabetes, pressão alta, remédio em uso.", type: "text" }
+const PROFILE_KEY = "patient_profile";
+
+const CHAT_FLOW = [
+  { id: "queixaPrincipal", question: "Em uma frase, qual sua queixa principal agora?", type: "text" },
+  { id: "sintomasRelatados", question: "Quais outros sintomas voce percebeu?", type: "text" },
+  { id: "intensidadeDor", question: "Qual a intensidade da dor (0 a 10)?", type: "choice", options: ["0", "2", "4", "6", "8", "10"] },
+  { id: "tempoSintomasMinutos", question: "Ha quantos minutos os sintomas comecaram?", type: "text" },
+  { id: "observacoes", question: "Alguma observacao clinica importante? (alergias, doencas, medicacoes)", type: "text" }
 ];
 
-function botMessage(text) { return { role: "bot", text }; }
-function userMessage(text) { return { role: "user", text }; }
-
-function formatCpf(value) {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
-  return digits
-    .replace(/(\d{3})(\d)/, "$1.$2")
-    .replace(/(\d{3})(\d)/, "$1.$2")
-    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-}
-
-function formatPhone(value) {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
-  if (digits.length <= 10) {
-    return digits
-      .replace(/(\d{2})(\d)/, "($1) $2")
-      .replace(/(\d{4})(\d)/, "$1-$2");
-  }
-  return digits
-    .replace(/(\d{2})(\d)/, "($1) $2")
-    .replace(/(\d{5})(\d)/, "$1-$2");
-}
-
-function getApiErrorMessage(err) {
-  const data = err?.response?.data;
-  const status = err?.response?.status;
-  const statusText = err?.response?.statusText;
-
-  if (!data) {
-    const base = err?.message || "Erro ao cadastrar paciente.";
-    return status ? `${base} (HTTP ${status}${statusText ? ` - ${statusText}` : ""})` : base;
-  }
-
-  if (typeof data === "string") return data;
-  if (data?.message && typeof data.message === "string") return data.message;
-  if (data?.title && typeof data.title === "string") {
-    if (data?.errors && typeof data.errors === "object") {
-      const details = Object.values(data.errors)
-        .flat()
-        .filter(Boolean)
-        .join(" | ");
-      return details ? `${data.title}: ${details}` : data.title;
-    }
-    return data.title;
-  }
-
-  try {
-    const serialized = JSON.stringify(data);
-    if (serialized && serialized !== "{}") return serialized;
-  } catch {
-    // ignore
-  }
-
-  const fallback = err?.message || "Erro ao cadastrar paciente.";
-  return status ? `${fallback} (HTTP ${status}${statusText ? ` - ${statusText}` : ""})` : fallback;
+function normalize(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function evaluateRisk(answers) {
   const dor = Number(answers.intensidadeDor || 0);
-  const highAlert = ["sim"].includes(String(answers.dorNoPeito || "").toLowerCase()) || ["sim"].includes(String(answers.faltaDeAr || "").toLowerCase()) || ["sim"].includes(String(answers.sangramento || "").toLowerCase());
   const text = `${answers.queixaPrincipal || ""} ${answers.sintomasRelatados || ""} ${answers.observacoes || ""}`.toLowerCase();
-  const severeTerms = ["desmaio", "convuls", "inconsciente", "avc", "fraqueza de um lado", "confusao"];
-  const moderateTerms = ["febre", "vomito", "tontura", "dor forte", "pressao alta"];
 
-  if (highAlert || severeTerms.some((t) => text.includes(t))) return { cor: "Vermelho", justificativa: "Sinal de alerta grave identificado na entrevista." };
-  if (dor >= 9) return { cor: "Laranja", justificativa: "Dor muito intensa informada." };
-  if (dor >= 7 || moderateTerms.some((t) => text.includes(t))) return { cor: "Amarelo", justificativa: "Sinais de urgência moderada no relato." };
-  if (dor >= 4) return { cor: "Verde", justificativa: "Quadro estável, mas com necessidade de avaliação clínica." };
-  return { cor: "Azul", justificativa: "Baixa urgência inicial no auto-relato." };
-}
-
-function buildSummary(answers) {
-  const pontos = [
-    answers.queixaPrincipal && `Queixa principal: ${answers.queixaPrincipal}.`,
-    answers.sintomasRelatados && `Sintomas associados: ${answers.sintomasRelatados}.`,
-    answers.intensidadeDor && `Dor atual: ${answers.intensidadeDor}/10.`,
-    answers.tempoSintomasMinutos && `Início dos sintomas: há ${answers.tempoSintomasMinutos} minutos.`,
-    answers.dorNoPeito && `Dor no peito: ${answers.dorNoPeito}.`,
-    answers.faltaDeAr && `Falta de ar: ${answers.faltaDeAr}.`,
-    answers.sangramento && `Sangramento ativo: ${answers.sangramento}.`,
-    answers.observacoes && `Observações adicionais: ${answers.observacoes}.`
-  ].filter(Boolean);
-  return pontos.join(" ");
+  if (dor >= 9 || text.includes("falta de ar") || text.includes("dor no peito") || text.includes("desmaio")) {
+    return "Laranja";
+  }
+  if (dor >= 7 || text.includes("febre") || text.includes("vomito")) {
+    return "Amarelo";
+  }
+  if (dor >= 4) {
+    return "Verde";
+  }
+  return "Azul";
 }
 
 export default function AutoAtendimentoPage() {
   const navigate = useNavigate();
+  const { user } = useAuthStore();
+
   const [locais, setLocais] = useState([]);
+  const [perfil, setPerfil] = useState(null);
+  const [carregandoPerfil, setCarregandoPerfil] = useState(true);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+
+  const [chat, setChat] = useState([{ role: "bot", text: CHAT_FLOW[0].question }]);
+  const [stepIndex, setStepIndex] = useState(0);
   const [chatInput, setChatInput] = useState("");
-  const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState({});
-  const [chat, setChat] = useState([botMessage(FLOW[0].question)]);
-  const [cityQuery, setCityQuery] = useState("");
-  const [form, setForm] = useState({ nomeCompleto: "", cpf: "", dataNascimento: "", sexo: "", telefone: "", endereco: "", cidade: "", uf: "SP", unidadeUpa: "", nomeResponsavel: "", queixaPrincipal: "" });
 
-  useEffect(() => { api.get("/publico/cidades-sp-upa").then((r) => setLocais(r.data)).catch(() => setLocais([])); }, []);
-
-  const cidadesFiltradas = useMemo(() => {
-    const q = cityQuery.trim().toLowerCase();
-    if (!q) return locais.slice(0, 20);
-    return locais.filter((x) => x.cidade.toLowerCase().includes(q)).slice(0, 20);
-  }, [locais, cityQuery]);
-
-  const unidades = useMemo(() => locais.find((x) => x.cidade === form.cidade)?.unidadesUpa || [], [locais, form.cidade]);
-  const resumo = useMemo(() => buildSummary(answers), [answers]);
-  const risk = useMemo(() => evaluateRisk(answers), [answers]);
-  const finished = current >= FLOW.length;
+  const [form, setForm] = useState({
+    unidadeUpa: "",
+    queixaPrincipal: "",
+    sintomasRelatados: "",
+    intensidadeDor: 4,
+    tempoSintomasMinutos: 60,
+    observacoes: ""
+  });
 
   useEffect(() => {
-    const found = locais.find((x) => x.cidade.toLowerCase() === cityQuery.trim().toLowerCase());
-    if (!found) return;
-    setForm((prev) => ({ ...prev, cidade: found.cidade, uf: found.uf || "SP", unidadeUpa: prev.unidadeUpa }));
-  }, [cityQuery, locais]);
+    api.get("/publico/cidades-sp-upa").then((r) => setLocais(r.data || [])).catch(() => setLocais([]));
+  }, []);
 
-  function registerAnswer(value) {
-    if (finished) return;
-    const step = FLOW[current];
+  useEffect(() => {
+    let ativo = true;
+
+    async function carregarPerfil() {
+      setCarregandoPerfil(true);
+
+      const cachedRaw = localStorage.getItem(PROFILE_KEY);
+      let cached = null;
+      if (cachedRaw) {
+        try {
+          cached = JSON.parse(cachedRaw);
+        } catch {
+          cached = null;
+        }
+      }
+
+      try {
+        const { data } = await api.get("/pacientes");
+        const lista = Array.isArray(data) ? data : Array.isArray(data?.value) ? data.value : [];
+
+        const encontrado = lista.find((p) => normalize(p.nomeCompleto) === normalize(user?.nome));
+        if (encontrado?.id) {
+          const detalhe = await api.get(`/pacientes/${encontrado.id}`).then((r) => r.data).catch(() => null);
+          if (detalhe && ativo) {
+            const perfilReal = {
+              nomeCompleto: detalhe.nomeCompleto,
+              cpf: detalhe.cpf,
+              dataNascimento: String(detalhe.dataNascimento || ""),
+              sexo: detalhe.sexo,
+              telefone: detalhe.telefone,
+              endereco: detalhe.endereco,
+              cidade: detalhe.cidade,
+              uf: detalhe.uf,
+              nomeResponsavel: detalhe.nomeResponsavel || ""
+            };
+
+            setPerfil(perfilReal);
+            setForm((prev) => ({ ...prev, unidadeUpa: detalhe.unidadeUpa || prev.unidadeUpa }));
+
+            localStorage.setItem(
+              PROFILE_KEY,
+              JSON.stringify({
+                ...cached,
+                ...perfilReal,
+                convenio: detalhe.unidadeUpa || cached?.convenio || ""
+              })
+            );
+            setCarregandoPerfil(false);
+            return;
+          }
+        }
+      } catch {
+        // fallback para cache
+      }
+
+      if (ativo) {
+        if (cached) {
+          setPerfil({
+            nomeCompleto: cached.nomeCompleto,
+            cpf: cached.cpf,
+            dataNascimento: cached.dataNascimento,
+            sexo: cached.sexo || "NaoQueroIdentificar",
+            telefone: cached.telefone,
+            endereco: cached.endereco,
+            cidade: cached.cidade,
+            uf: cached.uf || "SP",
+            nomeResponsavel: cached.nomeResponsavel || ""
+          });
+          setForm((prev) => ({ ...prev, unidadeUpa: cached.convenio || prev.unidadeUpa }));
+        }
+        setCarregandoPerfil(false);
+      }
+    }
+
+    carregarPerfil();
+    return () => {
+      ativo = false;
+    };
+  }, [user?.nome]);
+
+  const unidades = useMemo(() => {
+    const cidade = perfil?.cidade;
+    if (!cidade) return [];
+    return locais.find((x) => normalize(x.cidade) === normalize(cidade))?.unidadesUpa || [];
+  }, [locais, perfil?.cidade]);
+
+  const chatDone = stepIndex >= CHAT_FLOW.length;
+  const currentStep = CHAT_FLOW[stepIndex];
+
+  const resumo = useMemo(() => {
+    return [
+      form.queixaPrincipal && `Queixa: ${form.queixaPrincipal}`,
+      form.sintomasRelatados && `Sintomas: ${form.sintomasRelatados}`,
+      `Dor: ${form.intensidadeDor}/10`,
+      `Tempo: ${form.tempoSintomasMinutos} min`,
+      form.observacoes && `Obs: ${form.observacoes}`
+    ].filter(Boolean).join(" | ");
+  }, [form]);
+
+  const riscoSugerido = useMemo(() => evaluateRisk(answers), [answers]);
+
+  function answerChat(value) {
+    if (chatDone) return;
     const clean = String(value || "").trim();
     if (!clean) return;
+
+    const step = CHAT_FLOW[stepIndex];
+    const numeric = step.id === "intensidadeDor" || step.id === "tempoSintomasMinutos";
+
     const nextAnswers = { ...answers, [step.id]: clean };
-    const nextChat = [...chat, userMessage(clean)];
-    if (step.id === "queixaPrincipal") setForm((f) => ({ ...f, queixaPrincipal: clean }));
-    const nextIndex = current + 1;
-    if (nextIndex >= FLOW.length) {
-      const finalRisk = evaluateRisk(nextAnswers);
-      nextChat.push(botMessage("Entrevista concluída. Vou montar seu resumo para acelerar sua triagem."));
-      nextChat.push(botMessage(`Classificação preliminar sugerida: ${finalRisk.cor}. Essa sugestão será validada por um profissional de saúde.`));
-    } else {
-      if (["dorNoPeito", "faltaDeAr", "sangramento"].includes(step.id) && clean.toLowerCase() === "sim") nextChat.push(botMessage("Entendi. Esse sinal pode indicar urgência. Vamos continuar rápido para priorizar seu atendimento."));
-      nextChat.push(botMessage(FLOW[nextIndex].question));
-    }
     setAnswers(nextAnswers);
+
+    setForm((prev) => ({
+      ...prev,
+      [step.id]: numeric ? Number(clean) : clean
+    }));
+
+    const nextChat = [...chat, { role: "user", text: clean }];
+    const nextIndex = stepIndex + 1;
+
+    if (nextIndex < CHAT_FLOW.length) {
+      nextChat.push({ role: "bot", text: CHAT_FLOW[nextIndex].question });
+    } else {
+      nextChat.push({ role: "bot", text: "Entrevista concluida. Ja gerei um resumo para apoiar a triagem." });
+    }
+
     setChat(nextChat);
+    setStepIndex(nextIndex);
     setChatInput("");
-    setCurrent(nextIndex);
   }
 
-  async function onSubmit(e) {
+  async function submit(e) {
     e.preventDefault();
     setStatus("");
     setError("");
-    if (!finished) return setError("Finalize a conversa com a assistente antes de entrar na fila.");
 
-    const payload = { ...form, queixaPrincipal: resumo || form.queixaPrincipal, dataNascimento: form.dataNascimento || "1990-01-01", nomeResponsavel: form.nomeResponsavel || null };
+    if (!perfil?.nomeCompleto || !perfil?.cpf || !perfil?.dataNascimento || !perfil?.cidade || !perfil?.uf) {
+      setError("Nao encontramos seu cadastro completo. Procure a recepcao para vincular seus dados e tente novamente.");
+      return;
+    }
+
+    if (!form.unidadeUpa.trim()) {
+      setError("Selecione a unidade UPA.");
+      return;
+    }
+
+    if (!chatDone || !form.queixaPrincipal || !form.sintomasRelatados) {
+      setError("Finalize o chat de pre-triagem para entrar na fila.");
+      return;
+    }
+
+    const payload = {
+      nomeCompleto: perfil.nomeCompleto,
+      cpf: perfil.cpf,
+      dataNascimento: perfil.dataNascimento,
+      sexo: perfil.sexo || "NaoQueroIdentificar",
+      telefone: perfil.telefone || "",
+      endereco: perfil.endereco || "",
+      cidade: perfil.cidade,
+      uf: perfil.uf,
+      unidadeUpa: form.unidadeUpa,
+      nomeResponsavel: perfil.nomeResponsavel || null,
+      queixaPrincipal: form.queixaPrincipal,
+      sintomasRelatados: `${form.sintomasRelatados || ""} ${form.observacoes || ""}`.trim(),
+      corSugerida: riscoSugerido
+    };
+
     const { data } = await api.post("/publico/autoatendimento/paciente", payload).catch((err) => {
-      setError(getApiErrorMessage(err));
+      const message = err?.response?.data;
+      setError(typeof message === "string" ? message : "Nao foi possivel concluir sua pre-triagem.");
       return { data: null };
     });
-    if (data) {
-      setStatus(`Cadastro concluído. Protocolo: ${data.protocoloPublico}. Classificação preliminar: ${risk.cor}.`);
-      navigate(`/acompanhar/${data.protocoloPublico}`);
-    }
+
+    if (!data) return;
+
+    setStatus(`Protocolo gerado: ${data.protocoloPublico}`);
+    localStorage.setItem("last_protocol", data.protocoloPublico);
+    navigate(`/acompanhar/${data.protocoloPublico}`);
   }
 
-  const currentStep = FLOW[current];
-
   return (
-    <div className="min-h-screen bg-[#070d0c]">
-      <div className="mx-auto max-w-6xl p-4 md:p-6">
-      <header className="panel mb-4">
-        <h1 className="text-xl font-extrabold text-[#ecf7f3]">Autoatendimento com IA de triagem</h1>
-        <p className="text-sm text-[#96afa8]">Converse com a assistente para gerar resumo clínico inicial e classificação preliminar de risco.</p>
+    <div className="page-wrap space-y-4">
+      <header className="panel">
+        <h1 className="text-2xl font-extrabold text-[#0F172A]">Iniciar pre-triagem</h1>
+        <p className="text-sm text-[#475569]">Cadastro carregado automaticamente. Converse com a IA e selecione a UPA.</p>
       </header>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <section className="panel">
-          <h2 className="text-base font-bold text-[#e9f5f1]">1. Identificação</h2>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <input className="field" placeholder="Nome completo" value={form.nomeCompleto} onChange={(e) => setForm({ ...form, nomeCompleto: e.target.value })} required />
-            <input className="field" placeholder="CPF" value={form.cpf} onChange={(e) => setForm({ ...form, cpf: formatCpf(e.target.value) })} required />
-            <input className="field" type="date" value={form.dataNascimento} onChange={(e) => setForm({ ...form, dataNascimento: e.target.value })} required />
-            <select className="field" value={form.sexo} onChange={(e) => setForm({ ...form, sexo: e.target.value })} required>
-              <option value="">Sexo</option>
-              <option value="Masculino">Masculino</option>
-              <option value="Feminino">Feminino</option>
-              <option value="NaoQueroIdentificar">Não quero identificar</option>
-            </select>
-            <input className="field" placeholder="Telefone" value={form.telefone} onChange={(e) => setForm({ ...form, telefone: formatPhone(e.target.value) })} required />
-            <input className="field" placeholder="Endereço" value={form.endereco} onChange={(e) => setForm({ ...form, endereco: e.target.value })} required />
+      {carregandoPerfil && <div className="panel-soft text-sm text-[#64748B]">Carregando cadastro do paciente...</div>}
 
-            <div className="relative md:col-span-2">
-              <input
-                className="field"
-                placeholder="Digite para buscar cidade de SP"
-                value={cityQuery}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setCityQuery(value);
-                  setForm((prev) => ({ ...prev, cidade: value }));
-                }}
-                list="cidades-sp-list"
-                required
-              />
-              <datalist id="cidades-sp-list">
-                {cidadesFiltradas.map((x) => <option key={x.cidade} value={x.cidade} />)}
-              </datalist>
+      {!carregandoPerfil && !perfil && (
+        <div className="panel-soft space-y-3">
+          <p className="text-sm text-[#475569]">Nao encontramos seu cadastro completo para iniciar a triagem. Procure a recepcao para vincular seu cadastro.</p>
+          <div className="flex gap-2">
+            <Link to="/app/paciente/fila" className="btn btn-primary">Acompanhar fila</Link>
+            <Link to="/app/paciente/triagem" className="btn btn-neutral">Tentar novamente</Link>
+          </div>
+        </div>
+      )}
+
+      {!carregandoPerfil && perfil && (
+        <form className="grid gap-4 xl:grid-cols-3" onSubmit={submit}>
+          <section className="panel xl:col-span-2 space-y-5">
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-[#475569]">Cadastro identificado</h2>
+              <div className="mt-3 grid gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 text-sm text-[#334155] md:grid-cols-2">
+                <p><strong>Nome:</strong> {perfil.nomeCompleto}</p>
+                <p><strong>CPF:</strong> {perfil.cpf}</p>
+                <p><strong>Nascimento:</strong> {perfil.dataNascimento}</p>
+                <p><strong>Cidade/UF:</strong> {perfil.cidade} - {perfil.uf}</p>
+              </div>
             </div>
 
-            <select className="field" value={form.unidadeUpa} onChange={(e) => setForm({ ...form, unidadeUpa: e.target.value })} required>
-              <option value="">UPA (simulação)</option>
-              {unidades.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
-            <input className="field" value={form.uf} readOnly />
-          </div>
-        </section>
-
-        <section className="panel">
-          <h2 className="text-base font-bold text-[#e9f5f1]">2. Chat de triagem</h2>
-          <div
-            className="mt-3 h-[360px] overflow-y-auto rounded-lg border border-[#2a433d] bg-[#11211d] p-3"
-            style={{ scrollbarGutter: "stable" }}
-          >
-            <div className="space-y-2">
-              {chat.map((item, idx) => (
-                <div
-                  key={`${item.role}-${idx}`}
-                  className={`max-w-[90%] rounded-lg px-3 py-2.5 text-sm leading-relaxed ${
-                    item.role === "bot"
-                      ? "border border-[#35564d] bg-[#19312b] text-[#e5f3ee]"
-                      : "ml-auto border border-emerald-300/40 bg-emerald-500 text-[#042017]"
-                  }`}
-                >
-                  {item.text}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {!finished && (
-            <div className="mt-3 space-y-2">
-              {currentStep?.type === "choice" ? (
-                <div className="flex flex-wrap gap-2">
-                  {currentStep.options.map((opt) => (
-                    <button key={opt} type="button" className="btn btn-neutral" onClick={() => registerAnswer(opt)}>{opt}</button>
-                  ))}
-                </div>
+            <div>
+              <label className="label">UPA</label>
+              {unidades.length > 0 ? (
+                <select className="field" value={form.unidadeUpa} onChange={(e) => setForm({ ...form, unidadeUpa: e.target.value })} required>
+                  <option value="">Selecione</option>
+                  {unidades.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
               ) : (
-                <>
-                  <textarea className="field" rows={3} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Digite sua resposta" />
-                  <button type="button" onClick={() => registerAnswer(chatInput)} className="btn btn-primary">Enviar</button>
-                </>
+                <input className="field" value={form.unidadeUpa} onChange={(e) => setForm({ ...form, unidadeUpa: e.target.value })} placeholder="Digite a unidade UPA" required />
               )}
             </div>
-          )}
 
-          <div className="mt-3 rounded-lg border border-amber-400/35 bg-amber-950/25 p-3">
-            <p className="text-xs font-bold uppercase tracking-[0.1em] text-amber-200">Risco preliminar sugerido</p>
-            <p className="mt-1 text-sm font-bold text-amber-200">{risk.cor}</p>
-            <p className="text-sm leading-relaxed text-amber-100">{risk.justificativa}</p>
-          </div>
-        </section>
-      </div>
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-[#475569]">Chat de pre-triagem IA</h2>
+              <div className="mt-3 rounded-xl border border-[#E2E8F0] bg-white p-3">
+                <div className="h-[300px] space-y-2 overflow-y-auto rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3">
+                  {chat.map((m, idx) => (
+                    <div
+                      key={`${m.role}-${idx}`}
+                      className={`max-w-[90%] rounded-lg px-3 py-2 text-sm ${m.role === "bot"
+                        ? "border border-[#E2E8F0] bg-white text-[#334155]"
+                        : "ml-auto border border-[#BBF7D0] bg-[#DCFCE7] text-[#166534]"}`}
+                    >
+                      {m.text}
+                    </div>
+                  ))}
+                </div>
 
-      <form className="panel mt-4" onSubmit={onSubmit}>
-        <h2 className="text-base font-bold text-[#e8f5f1]">3. Resumo e entrada na fila</h2>
-        <div className="mt-2 rounded-lg border border-[#2a433d] bg-[#132522] p-3 text-sm leading-relaxed text-[#dcece7]">{resumo || "Resumo será gerado ao longo da conversa."}</div>
-        <div className="mt-3 min-h-[44px]">
-          {status && <div className="rounded-md border border-emerald-400/40 bg-emerald-950/25 p-2 text-sm text-emerald-200">{status}</div>}
-          {error && <div className="rounded-md border border-red-400/40 bg-red-950/25 p-2 text-sm text-red-200">{error}</div>}
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button type="submit" className="btn btn-primary">Entrar na fila</button>
-          <Link to="/login" className="btn btn-neutral">Voltar ao login profissional</Link>
-        </div>
-      </form>
-    </div>
+                {!chatDone && (
+                  <div className="mt-3 space-y-2">
+                    {currentStep?.type === "choice" ? (
+                      <div className="flex flex-wrap gap-2">
+                        {currentStep.options.map((opt) => (
+                          <button key={opt} type="button" className="btn btn-neutral" onClick={() => answerChat(opt)}>{opt}</button>
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <textarea className="field" rows={2} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Digite sua resposta" />
+                        <button type="button" className="btn btn-primary" onClick={() => answerChat(chatInput)}>Enviar resposta</button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2 text-sm text-[#334155]">
+                  <p><strong>Risco sugerido:</strong> {riscoSugerido}</p>
+                  <p className="mt-1 text-xs text-[#64748B]">Sugestao automatica para priorizacao inicial. A classificacao final e da equipe clinica.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3">
+              <p className="text-xs font-bold uppercase tracking-[0.08em] text-[#475569]">Resumo gerado</p>
+              <p className="mt-1 text-sm text-[#334155]">{resumo || "Conclua o chat para gerar o resumo clinico."}</p>
+            </div>
+
+            {status && <p className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-700">{status}</p>}
+            {error && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</p>}
+
+            <div className="flex flex-wrap gap-2">
+              <button type="submit" className="btn btn-primary">Entrar na fila</button>
+              <Link to="/app/paciente/fila" className="btn btn-neutral">Acompanhar protocolo</Link>
+            </div>
+          </section>
+
+          <aside className="panel">
+            <h3 className="text-sm font-bold text-[#0F172A]">Fluxo</h3>
+            <ol className="mt-3 space-y-2 text-sm text-[#475569]">
+              <li className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2">1. Cadastro carregado automaticamente</li>
+              <li className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2">2. Seleciona UPA</li>
+              <li className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2">3. Conversa no chat com IA</li>
+              <li className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2">4. Recebe protocolo e acompanha fila</li>
+            </ol>
+          </aside>
+        </form>
+      )}
     </div>
   );
 }
